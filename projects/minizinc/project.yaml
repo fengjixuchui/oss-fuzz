@@ -5,6 +5,4 @@ auto_ccs:
   - "guido.tack@monash.edu"
 sanitizers:
   - address
-  - memory:
-     experimental: True
-  - undefined
+  - memory

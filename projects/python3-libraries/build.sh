@@ -41,7 +41,7 @@ case $SANITIZER in
     ;;
 esac
 
-export CPYTHON_INSTALL_PATH=$OUT/cpython-install
+export CPYTHON_INSTALL_PATH=$SRC/cpython-install
 rm -rf $CPYTHON_INSTALL_PATH
 mkdir $CPYTHON_INSTALL_PATH
 
@@ -52,9 +52,11 @@ cp $SRC/python-library-fuzzers/python_coverage.h Python/
 sed -i '1 s/^.*$/#include "python_coverage.h"/g' Python/ceval.c
 sed -i 's/case TARGET\(.*\): {/\0\nfuzzer_record_code_coverage(f->f_code, f->f_lasti);/g' Python/ceval.c
 
-./configure "${FLAGS[@]+"${FLAGS[@]}"}" --prefix=$CPYTHON_INSTALL_PATH
+./configure "${FLAGS[@]:-}" --prefix=$CPYTHON_INSTALL_PATH
 make -j$(nproc)
 make install
+
+cp -R $CPYTHON_INSTALL_PATH $OUT/
 
 cd $SRC/python-library-fuzzers
 rm $CPYTHON_INSTALL_PATH/lib/python3.9/lib-dynload/_tkinter*.so

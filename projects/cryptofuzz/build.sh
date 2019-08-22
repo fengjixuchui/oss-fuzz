@@ -25,16 +25,53 @@ export INCLUDE_PATH_FLAGS=""
 cd $SRC/cryptofuzz
 python gen_repository.py
 
-cd $SRC/openssl
+if [[ $CFLAGS = *-m32* ]]
+then
+    export GOARCH=386
+    export CGO_ENABLED=1
+fi
+
+export GO111MODULE=off
+cd $SRC/go/src
+./make.bash
+export GOROOT=$(realpath $SRC/go)
+export GOPATH=$GOROOT/packages
+mkdir $GOPATH
+export PATH=$GOROOT/bin:$PATH
+export PATH=$GOROOT/packages/bin:$PATH
+
+apt-get remove golang-1.9-go -y
+rm /usr/bin/go
+
+go get golang.org/x/crypto/blake2b
+go get golang.org/x/crypto/blake2s
+go get golang.org/x/crypto/md4
+go get golang.org/x/crypto/ripemd160
 
 # This enables runtime checks for C++-specific undefined behaviour.
 export CXXFLAGS="$CXXFLAGS -D_GLIBCXX_DEBUG"
+
+# Prevent Boost compilation error with -std=c++17
+export CXXFLAGS="$CXXFLAGS -D_LIBCPP_ENABLE_CXX17_REMOVED_AUTO_PTR"
 
 export CXXFLAGS="$CXXFLAGS -I $SRC/cryptofuzz/fuzzing-headers/include"
 if [[ $CFLAGS = *sanitize=memory* ]]
 then
     export CXXFLAGS="$CXXFLAGS -DMSAN"
 fi
+
+# Compile Cityhash
+cd $SRC/cityhash
+if [[ $CFLAGS != *-m32* ]]
+then
+    CXXFLAGS="$CXXFLAGS -msse4.2" ./configure --disable-shared >/dev/null 2>&1
+else
+    ./configure --disable-shared >/dev/null 2>&1
+fi
+make -j$(nproc) >/dev/null 2>&1
+
+export CXXFLAGS="$CXXFLAGS -I$SRC/cityhash/src"
+export CRYPTOFUZZ_REFERENCE_CITY_O_PATH="$SRC/cityhash/src/city.o"
 
 ##############################################################################
 if [[ $CFLAGS != *sanitize=memory* ]]
@@ -145,6 +182,15 @@ cd $SRC/cryptofuzz/modules/monero
 make -B
 
 ##############################################################################
+# Compile Cryptofuzz Golang module
+if [[ $CFLAGS != *sanitize=memory* ]]
+then
+    export CXXFLAGS="$CXXFLAGS -DCRYPTOFUZZ_GOLANG"
+    cd $SRC/cryptofuzz/modules/golang
+    make -B
+fi
+
+##############################################################################
 if [[ $CFLAGS != *sanitize=memory* && $CFLAGS != *-m32* ]]
 then
     # Compile LibreSSL (with assembly)
@@ -171,6 +217,34 @@ then
     cp $SRC/cryptofuzz/cryptofuzz-dict.txt $OUT/cryptofuzz-libressl.dict
     # Copy seed corpus
     cp $SRC/cryptofuzz-corpora/libressl_latest.zip $OUT/cryptofuzz-libressl_seed_corpus.zip
+fi
+
+if [[ $CFLAGS != *-m32* ]]
+then
+    # Compile LibreSSL (without assembly)
+    cd $SRC/libressl
+    rm -rf build ; mkdir build
+    cd build
+    cmake -DCMAKE_C_COMPILER=$CC -DCMAKE_CXX_COMPILER=$CXX -DCMAKE_CXX_FLAGS="$CXXFLAGS" -DCMAKE_C_FLAGS="$CFLAGS" -DENABLE_ASM=OFF ..
+    make -j$(nproc) crypto >/dev/null 2>&1
+
+    # Compile Cryptofuzz LibreSSL (without assembly) module
+    cd $SRC/cryptofuzz/modules/openssl
+    OPENSSL_INCLUDE_PATH="$SRC/libressl/include" OPENSSL_LIBCRYPTO_A_PATH="$SRC/libressl/build/crypto/libcrypto.a" CXXFLAGS="$CXXFLAGS -DCRYPTOFUZZ_LIBRESSL" make -B
+
+    # Compile Cryptofuzz
+    cd $SRC/cryptofuzz
+    LIBFUZZER_LINK="$LIB_FUZZING_ENGINE" CXXFLAGS="$CXXFLAGS -I $SRC/libressl/include -DCRYPTOFUZZ_LIBRESSL $INCLUDE_PATH_FLAGS" make -B -j$(nproc) >/dev/null 2>&1
+
+    # Generate dictionary
+    ./generate_dict
+
+    # Copy fuzzer
+    cp $SRC/cryptofuzz/cryptofuzz $OUT/cryptofuzz-libressl-noasm
+    # Copy dictionary
+    cp $SRC/cryptofuzz/cryptofuzz-dict.txt $OUT/cryptofuzz-libressl-noasm.dict
+    # Copy seed corpus
+    cp $SRC/cryptofuzz-corpora/libressl_latest.zip $OUT/cryptofuzz-libressl-noasm_seed_corpus.zip
 fi
 
 ##############################################################################
